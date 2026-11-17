@@ -175,3 +175,14 @@ TEST_CASE("WCP client can be recreated after the viewer disconnects") {
     }
 }
 #endif
+
+TEST_CASE("WCP client stops if the viewer can't be launched") {
+    ServerHarness server("");
+
+    // Used to wait forever for the viewer to connect
+    std::string command = "slang-server-missing-wcp-viewer {}";
+    auto start = std::chrono::steady_clock::now();
+    waves::WcpClient client(&server, command);
+    CHECK(!client.running());
+    CHECK(std::chrono::steady_clock::now() - start < std::chrono::seconds(10));
+}

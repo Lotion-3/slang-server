@@ -62,13 +62,19 @@ void waves::WcpClient::runViewer() {
                         &si, &pi)) {
         std::cerr << "Problem launching waveform viewer: " << GetLastError() << std::endl;
     }
+    else {
+        m_viewerProcess = pi.hProcess;
+        CloseHandle(pi.hThread);
+    }
 
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
     CloseHandle(hStdout);
     CloseHandle(hStderr);
 #else
-    if (fork() == 0) {
+    m_viewerPid = fork();
+    if (m_viewerPid < 0) {
+        std::cerr << "Problem launching waveform viewer: " << strerror(errno) << std::endl;
+    }
+    else if (m_viewerPid == 0) {
         auto stdoutLog = fs::temp_directory_path();
         stdoutLog /= "slang-server.wcp.stdout";
         auto stderrLog = fs::temp_directory_path();
@@ -94,8 +100,16 @@ void waves::WcpClient::runViewer() {
         // behavior?
         execvp(args[0], args.data());
         std::cerr << "Problem launching waveform viewer: " << strerror(errno) << std::endl;
-        exit(0);
+        _exit(127);
     }
+#endif
+}
+
+bool waves::WcpClient::viewerExited() {
+#ifdef _WIN32
+    return !m_viewerProcess || WaitForSingleObject(m_viewerProcess, 0) == WAIT_OBJECT_0;
+#else
+    return m_viewerPid < 0 || waitpid(m_viewerPid, nullptr, WNOHANG) == m_viewerPid;
 #endif
 }
 
@@ -134,6 +148,35 @@ void waves::WcpClient::greet() {
         std::cerr << "Problem listening to WCP port: " << strerror(errno) << std::endl;
         stop();
         return;
+    }
+
+    // Wait for the viewer to connect, unless it has exited or is taking too long
+    auto connectStart = std::chrono::steady_clock::now();
+    while (true) {
+        struct timeval tv = {.tv_sec = 0, .tv_usec = 100000};
+        fd_set serverFdSet;
+        FD_ZERO(&serverFdSet);
+        FD_SET(m_serverFd, &serverFdSet);
+        int retval = select(m_serverFd + 1, &serverFdSet, nullptr, nullptr, &tv);
+        if (retval < 0) {
+            std::cerr << "WCP select() failure: " << strerror(errno) << std::endl;
+            stop();
+            return;
+        }
+        if (retval > 0) {
+            break;
+        }
+        if (viewerExited()) {
+            std::cerr << "Waveform viewer exited before connecting" << std::endl;
+            stop();
+            return;
+        }
+        std::chrono::duration<double> connectWait = std::chrono::steady_clock::now() - connectStart;
+        if (connectWait.count() > 30.0) {
+            std::cerr << "Timed out waiting for the waveform viewer to connect" << std::endl;
+            stop();
+            return;
+        }
     }
 
     struct sockaddr_in clientAddr;

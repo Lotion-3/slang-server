@@ -68,6 +68,14 @@ private:
     // Waveform viewer command
     std::string m_command;
 
+    // Waveform viewer process, to notice if it exits before connecting
+#ifdef _WIN32
+    HANDLE m_viewerProcess = nullptr;
+#else
+    pid_t m_viewerPid = -1;
+#endif
+    bool viewerExited();
+
     static void closeSocket(int& fd) {
         if (fd < 0) {
             return;
@@ -181,6 +189,11 @@ public:
             m_clientThread.join();
         }
         stop();
+#ifdef _WIN32
+        if (m_viewerProcess) {
+            CloseHandle(m_viewerProcess);
+        }
+#endif
     }
 
     bool running() { return m_running; }
