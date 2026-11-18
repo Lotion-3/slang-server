@@ -13,7 +13,8 @@ function M.open(opts)
    local sorters = require("telescope.sorters")
 
    local displayer = entry_display.create({ separator = " ", items = { {}, { remaining = true } } })
-   local finder = {
+   -- Telescope calls its finder as a function.
+   local finder = setmetatable({
       close = function() end,
       find = function(_, prompt, process_result, process_complete)
          opts.search(prompt, function(result)
@@ -30,7 +31,11 @@ function M.open(opts)
             process_complete()
          end)
       end,
-   }
+   }, {
+      __call = function(self, ...)
+         return self:find(...)
+      end,
+   })
 
    pickers.new({}, {
       prompt_title = "Search hierarchy",
